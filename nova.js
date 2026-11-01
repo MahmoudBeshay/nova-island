@@ -284,12 +284,24 @@ ipcMain.on('drag-end', () => {
   send('hover', false);
 });
 
+function shouldShow() {
+  return !userHidden && !(fullscreenHidden && features.get().hideFullscreen);
+}
+
 function updateVisibility() {
   if (!win) return;
-  const shouldShow = !userHidden && !(fullscreenHidden && features.get().hideFullscreen);
-  if (shouldShow && !win.isVisible()) win.showInactive();
-  if (!shouldShow && win.isVisible()) win.hide();
-  send('visibility', shouldShow);
+  const show = shouldShow();
+  if (show && !win.isVisible()) win.showInactive();
+  if (!show && win.isVisible()) win.hide();
+  send('visibility', show);
+}
+
+// Show Desktop drops even topmost windows; put the island back without taking focus.
+function keepOnScreen() {
+  if (!win || !shouldShow()) return;
+  win.showInactive();
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.moveTop();
 }
 
 function createWindow() {
@@ -317,6 +329,7 @@ function createWindow() {
   });
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true);
+  win.on('minimize', keepOnScreen);
   win.setIgnoreMouseEvents(true);
   // keep the island out of screen captures so the glass backdrop shows what is behind it
   win.setContentProtection(true);
@@ -382,10 +395,14 @@ function startMedia() {
         if (data.error) console.error('[media]', data.error);
         if (typeof data.clip === 'number') onClipboardSeq(data.clip, !!data.clipPriv);
         if ('omni' in data) onOmni(data.omni);
-        if (typeof data.fs === 'boolean' && data.fs !== fullscreenHidden) {
-          fullscreenHidden = data.fs;
+        // explorer with no window title (or Progman's) is the desktop or taskbar, not a folder
+        const onDesktop = /^explorer$/i.test(data.fgProc) && (!data.fgTitle || data.fgTitle === 'Program Manager');
+        const fullscreen = data.fs && !onDesktop;
+        if (typeof data.fs === 'boolean' && fullscreen !== fullscreenHidden) {
+          fullscreenHidden = fullscreen;
           updateVisibility();
         }
+        if (onDesktop) keepOnScreen();
         send('media', data);
       } catch {}
     }
